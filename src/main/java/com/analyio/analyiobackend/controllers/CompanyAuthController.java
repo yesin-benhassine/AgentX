@@ -19,6 +19,7 @@ import com.analyio.analyiobackend.services.AuthService;
 import com.analyio.analyiobackend.services.CompanyService;
 import com.analyio.analyiobackend.services.JwtService;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.AllArgsConstructor;
 
 
@@ -100,7 +101,13 @@ public class CompanyAuthController {
 
 
     @GetMapping("/verify")
-    public ResponseEntity<?> verifyCompanyUser(@RequestParam String token) {
+    public ResponseEntity<?> verifyCompanyUser(HttpServletRequest request) {
+        String token = request.getCookies() != null ? 
+            java.util.Arrays.stream(request.getCookies())
+                .filter(cookie -> "access_token".equals(cookie.getName()))
+                .findFirst()
+                .map(cookie -> cookie.getValue())
+                .orElse(null) : null;
 
         return ResponseEntity.ok(jwtService.decodeToken(token));
     }
