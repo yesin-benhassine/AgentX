@@ -1,5 +1,7 @@
 package com.analyio.analyiobackend.services;
 
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -13,157 +15,90 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.ResetPasswordRequest;
 import com.analyio.analyiobackend.dto.TokenPair;
-import com.analyio.analyiobackend.dto.auth.LoginRequest;
-import com.analyio.analyiobackend.dto.auth.RegisterAdminUserRequest;
-import com.analyio.analyiobackend.dto.auth.RegisterCompanyUserRequest;
-import com.analyio.analyiobackend.jpa.models.adminusers.AdminRole;
-import com.analyio.analyiobackend.jpa.models.adminusers.AdminUser;
-import com.analyio.analyiobackend.jpa.models.company.Company;
-import com.analyio.analyiobackend.jpa.models.companyusers.CompanyRole;
-import com.analyio.analyiobackend.jpa.models.companyusers.CompanyUser;
-import com.analyio.analyiobackend.jpa.repos.AdminUserRepo;
+import com.analyio.analyiobackend.dto.UpdateUserRequest;
+import com.analyio.analyiobackend.jpa.Entities.Company;
+import com.analyio.analyiobackend.jpa.Entities.Role;
+import com.analyio.analyiobackend.jpa.Entities.UserJpa;
+import com.analyio.analyiobackend.jpa.Entities.UserResetPasswordCode;
 import com.analyio.analyiobackend.jpa.repos.CompanyRepo;
-import com.analyio.analyiobackend.jpa.repos.CompanyUserRepo;
+import com.analyio.analyiobackend.jpa.repos.UserRepo;
+import com.analyio.analyiobackend.jpa.repos.UserResetPasswordCodeRepo;
 
-import jakarta.transaction.Transactional;
 import lombok.AllArgsConstructor;
 
 @Service
 @AllArgsConstructor
 public class AuthService {
 
-    private final CompanyUserRepo companyUserRepo;
-    private final CompanyRepo companyRepo;
-    private final AdminUserRepo adminUserRepo;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final UserDetailsService userDetailsService;
-
-    @Transactional
-    public CompanyUser registerCompanyUser(RegisterCompanyUserRequest request){
-        // First, fetch the company by ID
-        Company company = companyRepo.findById(request.getCompanyId())
-            .orElseThrow(() -> new RuntimeException("Company not found with ID: " + request.getCompanyId()));
-        
-        CompanyUser companyUser = new CompanyUser();
-        companyUser.setUsername(request.getUsername());
-        companyUser.setPassword(passwordEncoder.encode(request.getPassword()));
-        companyUser.setRole(CompanyRole.valueOf(request.getRole().toUpperCase()));
-        companyUser.setEmail("company:" + request.getEmail()); // Storing with prefix
-        companyUser.setCompany(company); 
-        
-        // Set additional fields if present
-        request.getStreetAddress().ifPresent(companyUser::setStreetAddress);
-        request.getCity().ifPresent(companyUser::setCity);
-        request.getState().ifPresent(companyUser::setState);
-        request.getZipCode().ifPresent(companyUser::setZipCode);
-        request.getCountry().ifPresent(companyUser::setCountry);
-        request.getPhoneNumber().ifPresent(companyUser::setPhoneNumber);
-
-        return companyUserRepo.save(companyUser);
-    }    
-
-    @Transactional 
-    public AdminUser registerAdminUser(RegisterAdminUserRequest request){
-        AdminUser adminUser = 
-        AdminUser.builder().username(request.getUsername())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .role(AdminRole.ADMIN)
-                .email("admin:" + request.getEmail()) 
-                .address(request.getAddress().orElse(null))
-                .city(request.getCity().orElse(null))
-                .state(request.getState().orElse(null))
-                .zipCode(request.getZipCode().orElse(null))
-                .country(request.getCountry().orElse(null))
-                .phoneNumber(request.getPhoneNumber().orElse(null))
-                .build();
-
-        return adminUserRepo.save(adminUser);
-    }
-
-    public Map<String, ResponseCookie> loginCompanyUser(LoginRequest request){
-        String companyEmail = "company:" + request.getEmail();
-        
-        // Find user by prefixed email
-        CompanyUser user = companyUserRepo.findByEmail(companyEmail)
-            .orElseThrow(() -> new RuntimeException("Company user not found with email: " + request.getEmail()));
-
-        // Check if user is active BEFORE authentication
-        if (!user.isActive() || user.isDeleted()) {
-            throw new RuntimeException("User account is not active: " + request.getEmail());
-        }
-
-        // Authenticate using the prefixed email (this will call CustomUserDetailsService)
+    private final UserRepo userRepo; 
+    private final EmailService emailService;
+    private final CompanyRepo companyRepo;
+    private final UserResetPasswordCodeRepo userResetPasswordCodeRepo;
+    public Map<String, ResponseCookie> authenticate(String email, String password) {
         Authentication authentication = authenticationManager.authenticate(
-            new UsernamePasswordAuthenticationToken(
-                companyEmail, // This should match what's stored in DB
-                request.getPassword()
-            )
-        );
+                new UsernamePasswordAuthenticationToken(email, password));
+        
+
+
         SecurityContextHolder.getContext().setAuthentication(authentication);
-
-        TokenPair tokenPair = jwtService.generateTokenPair(authentication);
-
+        String accessToken = jwtService.generateAccessToken(authentication);
+        String refreshToken = jwtService.generateRefreshToken(authentication);
+        
+        TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
         Map<String, ResponseCookie> cookies = new HashMap<>();
         cookies.put("access_token", jwtService.createAuthCookie(tokenPair));
         cookies.put("refresh_token", jwtService.createRefreshCookie(tokenPair));
         return cookies;
     }
 
-public Map<String, ResponseCookie> loginAdminUser(LoginRequest request){
-    String adminEmail = "admin:" + request.getEmail();
-    
-    // Find user by prefixed email
-    AdminUser user = adminUserRepo.findByEmail(adminEmail)
-        .orElseThrow(() -> new RuntimeException("Admin user not found with email: " + request.getEmail()));
 
-    // Authenticate using the prefixed email
-    Authentication authentication = authenticationManager.authenticate(
-        new UsernamePasswordAuthenticationToken(
-            adminEmail, // This should match what's stored in DB
-            request.getPassword()
-        )
-    );
-    SecurityContextHolder.getContext().setAuthentication(authentication);
+public UserJpa signUpCompanyUserFlow(RegisterCompanyFirstTime request){
+    UserJpa user = UserJpa.builder()
+    .email(request.getSuperManagerEmail())
+    .username(request.getSuperManagerUsername())
+    .firstName(request.getSuperManagerFirstName())
+    .lastName(request.getSuperManagerLastName())
+    .password(passwordEncoder.encode(request.getSuperManagerPassword()))
+    .phoneNumber(request.getSuperManagerPhone())
+    .build();
 
-    TokenPair tokenPair = jwtService.generateTokenPair(authentication);
-    Map<String, ResponseCookie> cookies = new HashMap<>();
-    
-    cookies.put("access_token", jwtService.createAuthCookie(tokenPair));
-    cookies.put("refresh_token", jwtService.createRefreshCookie(tokenPair));
-      
-    return cookies; 
+
+    user.setRole(Role.COMPANY_MANAGER);
+
+    Company company = Company.builder()
+    .name(request.getName())
+    .superManagerEmail(request.getSuperManagerEmail())
+    .superManagerPhone(request.getSuperManagerPhone())
+    .build();
+
+    user.setCompany(company);
+
+    return userRepo.save(user);
 }
 
 
+public void createMasterUser(){
+    UserJpa user = UserJpa.builder()
+        .email("admin@admin.admin")
+        .username("admin")
+        .firstName("Admin")
+        .lastName("Admin")
+        .password(passwordEncoder.encode("admin123"))
+        .phoneNumber("1234567890")
+        .role(Role.SUPER_ADMIN)
+        .isActive(true)
+        .isDeleted(false)
+        .build();
 
-
-    @Transactional 
-    public void makeSuperAdmin() throws Exception{
-        String email = "admin@admin.admin";
-        String password = "admin123";
-        String username = "superadmin";
-
-        if(adminUserRepo.existsByEmail("admin:" + email)){
-            throw new Exception("Super admin already exists");
-        }
-        
-
-        adminUserRepo.save(AdminUser.builder()
-                .email("admin:" + email)
-                .password(passwordEncoder.encode(password))
-                .username(username)
-                .role(AdminRole.SUPER_ADMIN)
-                .build());
-
-
-
-    }
-
-
-public Map<String, ResponseCookie> refreshToken(String refreshToken) {
+}
+public ResponseCookie refreshToken(String refreshToken) {
     try {
         // First, check if it's a refresh token
         if (!jwtService.isRefreshToken(refreshToken)) {
@@ -191,14 +126,164 @@ public Map<String, ResponseCookie> refreshToken(String refreshToken) {
         
         TokenPair tokenPair = jwtService.generateTokenPair(authentication);
 
-        Map<String, ResponseCookie> cookies = new HashMap<>();
-        cookies.put("access_token", jwtService.createAuthCookie(tokenPair));
-        cookies.put("refresh_token", jwtService.createRefreshCookie(tokenPair));
-        
-        return cookies;
+        return jwtService.createAuthCookie(tokenPair);
         
     } catch (Exception e) {
         throw new RuntimeException("Token refresh failed: " + e.getMessage());
     }
 }
+
+
+
+public UserJpa teamMemberLogin(String email, String accessToken){
+    UserJpa currentUser = getAuthenticatedUser(accessToken);
+    String randomGeneratedPassword = generateRandomPassword();
+
+    emailService.sendEmail(
+        email,
+        "Welcome to analyio!",
+        "You've been added as a team member by " + currentUser.getUsername() + ". Your temporary password is: " + randomGeneratedPassword
+
+    );    
+
+    // Get a fresh managed Company entity from the database
+    Long companyId = currentUser.getCompany().getId();
+    Company company = companyRepo.findById(companyId)
+        .orElseThrow(() -> new RuntimeException("Company not found"));
+
+    UserJpa newUser = UserJpa.builder()
+        .email(email)
+        .password(passwordEncoder.encode(randomGeneratedPassword))
+        .role(Role.COMPANY_USER)
+        .company(company)  // Set the managed Company entity directly
+        .isActive(true)
+        .isDeleted(false)
+        .build();
+
+    return userRepo.save(newUser);
+}
+
+public UserJpa updateAccountDetails(String accessToken, UpdateUserRequest request){
+    UserJpa user = getAuthenticatedUser(accessToken);
+
+    if (request.getUsername() != null) {
+        user.setUsername(request.getUsername());
+    }
+    if (request.getFirstName() != null) {
+        user.setFirstName(request.getFirstName());
+    }
+    if (request.getLastName() != null) {
+        user.setLastName(request.getLastName());
+    }
+    if (request.getPhoneNumber() != null) {
+        user.setPhoneNumber(request.getPhoneNumber());
+    }
+
+    return userRepo.save(user);
+}
+
+public UserJpa getAuthenticatedUser(String access_token){
+    String email = jwtService.extractUsernameFromToken(access_token);
+    if (email == null) {
+        throw new RuntimeException("Unable to extract email from access token");
+    }
+
+    return userRepo.findByEmail(email)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+}
+
+private String generateRandomPassword() {
+    SecureRandom random = new SecureRandom();
+    String upperCase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    String lowerCase = "abcdefghijklmnopqrstuvwxyz";
+    String digits = "0123456789";
+    String symbols = "!@#$%^&*(),.?\":{}|<>";
+    String allChars = upperCase + lowerCase + digits + symbols;
+    
+    StringBuilder password = new StringBuilder();
+    
+    // Ensure at least one character from each category
+    password.append(upperCase.charAt(random.nextInt(upperCase.length())));
+    password.append(lowerCase.charAt(random.nextInt(lowerCase.length())));
+    password.append(digits.charAt(random.nextInt(digits.length())));
+    password.append(symbols.charAt(random.nextInt(symbols.length())));
+    
+    // Fill the rest with random characters (minimum 8 total)
+    for (int i = 4; i < 12; i++) {
+        password.append(allChars.charAt(random.nextInt(allChars.length())));
+    }
+    
+    // Shuffle the password to randomize the order
+    char[] chars = password.toString().toCharArray();
+    for (int i = chars.length - 1; i > 0; i--) {
+        int j = random.nextInt(i + 1);
+        char temp = chars[i];
+        chars[i] = chars[j];
+        chars[j] = temp;
+    }
+    
+    return new String(chars);
+}
+
+
+public void sendResetPasswordEmail(String email){
+    UserJpa user = userRepo.findByEmail(email).orElseThrow(
+        () -> new RuntimeException("User not found with email: " + email)
+    );
+    
+    // Delete any existing reset codes for this user first
+    userResetPasswordCodeRepo.findByUserId(user.getId())
+        .ifPresent(existingCode -> userResetPasswordCodeRepo.delete(existingCode));
+    
+    String resetCode = jwtService.generateResetPasswordCode();
+
+    // Ensure code is unique
+    while(userResetPasswordCodeRepo.existsByResetCode(resetCode)) {
+        resetCode = jwtService.generateResetPasswordCode();
+    }
+
+    UserResetPasswordCode resetPasswordCode = new UserResetPasswordCode();
+    resetPasswordCode.setResetCode(resetCode);
+    resetPasswordCode.setUser(user);
+    userResetPasswordCodeRepo.save(resetPasswordCode);
+
+    emailService.sendEmail(
+        email,
+        "Reset Password",
+        "Your reset password code is: " + resetCode
+    );
+}
+public boolean validateResetPasswordCode(String resetCode, String email) {
+    return userResetPasswordCodeRepo.findByResetCode(resetCode)
+        .map(code -> !code.getExpirationDate().isBefore(LocalDateTime.now()) && code.getUser().getEmail().equals(email))
+        .orElse(false);
+}
+
+public UserJpa resetPassword(ResetPasswordRequest request){
+    String resetCode = request.getResetCode();
+    String email = request.getEmail();
+    String newPassword = request.getNewPassword();
+    UserResetPasswordCode resetPasswordCode = userResetPasswordCodeRepo.findByResetCode(resetCode)
+        .orElseThrow(() -> new RuntimeException("Invalid reset code"));
+
+    if (resetPasswordCode.getExpirationDate().isBefore(LocalDateTime.now())) {
+        userResetPasswordCodeRepo.delete(resetPasswordCode);
+        throw new RuntimeException("Reset code has expired");
+        
+    }
+
+    UserJpa user = resetPasswordCode.getUser();
+    if (!user.getEmail().equals(email)) {
+        throw new RuntimeException("Email does not match the user associated with the reset code");
+    }
+    user.setPassword(passwordEncoder.encode(newPassword));
+    userRepo.save(user);
+
+    // Delete the reset code after successful password reset
+    userResetPasswordCodeRepo.delete(resetPasswordCode);
+
+    return user;
+}
+
+
 }

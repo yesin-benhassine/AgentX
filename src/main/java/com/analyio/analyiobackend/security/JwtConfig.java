@@ -44,9 +44,8 @@ public class JwtConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception{
         http.csrf(csrf->csrf.disable())
                 .cors(cors->cors.disable())
-                .authorizeHttpRequests(auth->auth.
-                        requestMatchers("/api/auth/admin/register").authenticated()
-                        .requestMatchers("/api/auth/**","/virtual/test/**").permitAll().
+                .authorizeHttpRequests(auth->auth
+                        .requestMatchers("/api/auth/**").permitAll().
                         anyRequest().authenticated()).sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)).addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .authenticationProvider(authenticationProvider());
