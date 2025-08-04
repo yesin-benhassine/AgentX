@@ -1,6 +1,7 @@
 package com.analyio.analyiobackend.services;
 
 
+import java.security.SecureRandom;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -145,6 +146,15 @@ public ResponseCookie createRefreshCookie(TokenPair tokenPair) {
             .build();
 }
     
-
+public String generateResetPasswordCode(){
+    SecureRandom random = new SecureRandom();
+    byte[] codeBytes = new byte[3]; 
+    random.nextBytes(codeBytes);
+    StringBuilder sb = new StringBuilder();
+    for (byte b : codeBytes) {
+        sb.append(String.format("%02x", b));
+    }
+    return sb.toString();
+}
 
 }

@@ -1,9 +1,9 @@
 package com.analyio.analyiobackend.services;
 
 import java.security.SecureRandom;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -15,14 +15,17 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import com.analyio.analyiobackend.dto.FinalizeTeamMemberAccount;
 import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.ResetPasswordRequest;
 import com.analyio.analyiobackend.dto.TokenPair;
+import com.analyio.analyiobackend.dto.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.Company;
 import com.analyio.analyiobackend.jpa.Entities.Role;
 import com.analyio.analyiobackend.jpa.Entities.UserJpa;
+import com.analyio.analyiobackend.jpa.Entities.UserResetPasswordCode;
 import com.analyio.analyiobackend.jpa.repos.CompanyRepo;
 import com.analyio.analyiobackend.jpa.repos.UserRepo;
+import com.analyio.analyiobackend.jpa.repos.UserResetPasswordCodeRepo;
 
 import lombok.AllArgsConstructor;
 
@@ -37,12 +40,11 @@ public class AuthService {
     private final UserRepo userRepo; 
     private final EmailService emailService;
     private final CompanyRepo companyRepo;
-
+    private final UserResetPasswordCodeRepo userResetPasswordCodeRepo;
     public Map<String, ResponseCookie> authenticate(String email, String password) {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(email, password));
         
-
 
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -161,18 +163,23 @@ public UserJpa teamMemberLogin(String email, String accessToken){
     return userRepo.save(newUser);
 }
 
-public UserJpa finalizeTeamMemberAccount(FinalizeTeamMemberAccount request, String email){
-    Optional<UserJpa> incompleteAccount = userRepo.findByEmail(email);
-    if (incompleteAccount.isPresent()) {
-        UserJpa user = incompleteAccount.get();
+public UserJpa updateAccountDetails(String accessToken, UpdateUserRequest request){
+    UserJpa user = getAuthenticatedUser(accessToken);
+
+    if (request.getUsername() != null) {
         user.setUsername(request.getUsername());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user.setFirstName(request.getFirstName());
-        user.setLastName(request.getLastName());
-        user.setPhoneNumber(request.getPhoneNumber());
-        return userRepo.save(user);
     }
-    throw new RuntimeException("User not found");
+    if (request.getFirstName() != null) {
+        user.setFirstName(request.getFirstName());
+    }
+    if (request.getLastName() != null) {
+        user.setLastName(request.getLastName());
+    }
+    if (request.getPhoneNumber() != null) {
+        user.setPhoneNumber(request.getPhoneNumber());
+    }
+
+    return userRepo.save(user);
 }
 
 public UserJpa getAuthenticatedUser(String access_token){
@@ -217,4 +224,66 @@ private String generateRandomPassword() {
     
     return new String(chars);
 }
+
+
+public void sendResetPasswordEmail(String email){
+    UserJpa user = userRepo.findByEmail(email).orElseThrow(
+        () -> new RuntimeException("User not found with email: " + email)
+    );
+    
+    // Delete any existing reset codes for this user first
+    userResetPasswordCodeRepo.findByUserId(user.getId())
+        .ifPresent(existingCode -> userResetPasswordCodeRepo.delete(existingCode));
+    
+    String resetCode = jwtService.generateResetPasswordCode();
+
+    // Ensure code is unique
+    while(userResetPasswordCodeRepo.existsByResetCode(resetCode)) {
+        resetCode = jwtService.generateResetPasswordCode();
+    }
+
+    UserResetPasswordCode resetPasswordCode = new UserResetPasswordCode();
+    resetPasswordCode.setResetCode(resetCode);
+    resetPasswordCode.setUser(user);
+    userResetPasswordCodeRepo.save(resetPasswordCode);
+
+    emailService.sendEmail(
+        email,
+        "Reset Password",
+        "Your reset password code is: " + resetCode
+    );
+}
+public boolean validateResetPasswordCode(String resetCode, String email) {
+    return userResetPasswordCodeRepo.findByResetCode(resetCode)
+        .map(code -> !code.getExpirationDate().isBefore(LocalDateTime.now()) && code.getUser().getEmail().equals(email))
+        .orElse(false);
+}
+
+public UserJpa resetPassword(ResetPasswordRequest request){
+    String resetCode = request.getResetCode();
+    String email = request.getEmail();
+    String newPassword = request.getNewPassword();
+    UserResetPasswordCode resetPasswordCode = userResetPasswordCodeRepo.findByResetCode(resetCode)
+        .orElseThrow(() -> new RuntimeException("Invalid reset code"));
+
+    if (resetPasswordCode.getExpirationDate().isBefore(LocalDateTime.now())) {
+        userResetPasswordCodeRepo.delete(resetPasswordCode);
+        throw new RuntimeException("Reset code has expired");
+        
+    }
+
+    UserJpa user = resetPasswordCode.getUser();
+    if (!user.getEmail().equals(email)) {
+        throw new RuntimeException("Email does not match the user associated with the reset code");
+    }
+    user.setPassword(passwordEncoder.encode(newPassword));
+    userRepo.save(user);
+
+    // Delete the reset code after successful password reset
+    userResetPasswordCodeRepo.delete(resetPasswordCode);
+
+    return user;
+}
+
+
 }

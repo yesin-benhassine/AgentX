@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,9 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.analyio.analyiobackend.dto.LoginRequest;
 import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.ResetPasswordRequest;
+import com.analyio.analyiobackend.dto.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.UserJpa;
 import com.analyio.analyiobackend.services.AuthService;
-import com.analyio.analyiobackend.services.EmailService;
+import com.analyio.analyiobackend.services.CleanupService;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,7 +30,7 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class AuthController {
     private final AuthService authService;
-    private final EmailService emailService;
+    private final CleanupService cleanupService;
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterCompanyFirstTime request) {
         try{
@@ -64,6 +67,7 @@ public class AuthController {
 
 
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<UserJpa> getCurrentLoggedInUser(HttpServletRequest request){
         String accessToken=new String(); 
         if (request.getCookies() == null) {
@@ -165,4 +169,59 @@ public class AuthController {
     public ResponseEntity<?> addTeamMember(@RequestParam String email, HttpServletRequest request) {
         authService.teamMemberLogin(email, extractAccessToken(request));
         return ResponseEntity.ok().build();
-    }}
+    }
+    
+    @PutMapping("/update-account")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<UserJpa> updateAccountDetails(@RequestBody UpdateUserRequest request, HttpServletRequest httpServletRequest) {
+        String accessToken = extractAccessToken(httpServletRequest);
+        if (accessToken == null) {
+            return ResponseEntity.status(401).body(null); // Unauthorized if no access token
+        }
+        UserJpa updatedUser = authService.updateAccountDetails(accessToken, request);
+        return ResponseEntity.ok(updatedUser);
+    
+}
+
+@GetMapping("/send-reset-password-email")
+public ResponseEntity<?> sendPasswordResetEmail(@RequestParam String email) {
+    try{
+        authService.sendResetPasswordEmail(email);
+        return ResponseEntity.ok("Reset password email sent successfully");
+    }
+    catch (Exception e) {
+        return ResponseEntity.badRequest().body("Failed to send reset password email: " + e.getMessage());
+    }
+
+}
+//development only endpoint
+@GetMapping("/validate-reset-code")
+public ResponseEntity<?> validateResetCode(@RequestParam String resetCode, @RequestParam String email) {
+    try{
+        boolean isValid = authService.validateResetPasswordCode(resetCode, email);
+        if (isValid) {
+            return ResponseEntity.ok("Reset code is valid");
+        } else {
+            cleanupService.cleanupExpiredResetCodes();
+            return ResponseEntity.badRequest().body("Invalid reset code");
+        }
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Error validating reset code: " + e.getMessage());
+    }
+
+
+
+
+}
+
+@PutMapping("/reset-password")
+public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request){
+    try{
+        authService.resetPassword(request);
+        return ResponseEntity.ok("Password reset successfully");
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Failed to reset password: " + e.getMessage());
+    }
+}
+
+}
