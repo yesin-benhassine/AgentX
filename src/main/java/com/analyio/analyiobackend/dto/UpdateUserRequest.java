@@ -1,5 +1,7 @@
 package com.analyio.analyiobackend.dto;
 
+import java.util.Optional;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,5 +14,6 @@ public class UpdateUserRequest {
     private String firstName;
     private String lastName;
     private String phoneNumber;
+    Optional<ExtraLocationData> locationData;   
     
 }

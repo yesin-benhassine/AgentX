@@ -20,6 +20,7 @@ import com.analyio.analyiobackend.dto.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.UserJpa;
 import com.analyio.analyiobackend.services.AuthService;
 import com.analyio.analyiobackend.services.CleanupService;
+import com.analyio.analyiobackend.services.DatabaseService;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,16 +32,18 @@ import lombok.AllArgsConstructor;
 public class AuthController {
     private final AuthService authService;
     private final CleanupService cleanupService;
+    private final DatabaseService databaseService;
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterCompanyFirstTime request) {
         try{
             if(validateEmail(request.getSuperManagerEmail()) && validatePassword(request.getSuperManagerPassword())){
                 UserJpa user = authService.signUpCompanyUserFlow(request);
+                authService.sendAccountValidationEmail(user.getEmail());
                 return ResponseEntity.ok(user);
             }
         }
         catch(Exception e){
-            return ResponseEntity.badRequest().body("Invalid email or password format. Please ensure your email is valid and your password meets the required criteria.");
+            return ResponseEntity.badRequest().body("Invalid email or password format. Please ensure your email is valid and your password meets the required criteria." +e.getMessage());
         }
         return ResponseEntity.ok().build();
     }
@@ -64,6 +67,15 @@ public class AuthController {
         }
     }
         
+    @GetMapping("/validate")
+    public ResponseEntity<?> validateEmailAccount(@RequestParam String email) {
+        try {
+            UserJpa user = authService.validateUserEmail(email);
+            return ResponseEntity.ok(user);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Failed to validate email: " + e.getMessage());
+        }
+    }
 
 
     @GetMapping("/me")
@@ -164,7 +176,7 @@ public class AuthController {
         }
         return accessToken;
     }
-    @PostMapping("/add-team-member")
+    @GetMapping("/add-team-member")
     @PreAuthorize("hasRole('COMPANY_MANAGER')")
     public ResponseEntity<?> addTeamMember(@RequestParam String email, HttpServletRequest request) {
         authService.teamMemberLogin(email, extractAccessToken(request));
@@ -224,4 +236,30 @@ public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request
     }
 }
 
+@GetMapping("/add-admin")
+@PreAuthorize("hasRole('SUPER_ADMIN')")
+public ResponseEntity<?> addAdmin(@RequestParam String email) {
+    try {
+        authService.sendAdminEmail(email);
+        return ResponseEntity.ok().build();
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Failed to add admin: " + e.getMessage());
+    }
+
+}
+
+
+@GetMapping("/CLEAN-DATABASE")
+@PreAuthorize("hasRole('SUPER_ADMIN')")
+public ResponseEntity<?> cleanDatabase() {
+    try {
+        databaseService.clearDatabase();
+        authService.makeSuperAdmin();
+        return ResponseEntity.ok().build();
+
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Failed to clean database: " + e.getMessage());
+    }
+
+}
 }
