@@ -23,6 +23,6 @@ public interface UserRepo extends JpaRepository<UserJpa, Long>{
     Optional<UserJpa> findByPhoneNumber(String phoneNumber);
 
 
-
+    boolean existsByEmail(String email);
 
 }

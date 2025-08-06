@@ -4,6 +4,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -15,11 +16,13 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
-import com.analyio.analyiobackend.dto.ResetPasswordRequest;
-import com.analyio.analyiobackend.dto.TokenPair;
-import com.analyio.analyiobackend.dto.UpdateUserRequest;
+import com.analyio.analyiobackend.dto.authentication.ClientRegistrationRequest;
+import com.analyio.analyiobackend.dto.authentication.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.authentication.ResetPasswordRequest;
+import com.analyio.analyiobackend.dto.authentication.TokenPair;
+import com.analyio.analyiobackend.dto.authentication.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.Company;
+import com.analyio.analyiobackend.jpa.Entities.Location;
 import com.analyio.analyiobackend.jpa.Entities.Role;
 import com.analyio.analyiobackend.jpa.Entities.UserJpa;
 import com.analyio.analyiobackend.jpa.Entities.UserResetPasswordCode;
@@ -27,6 +30,7 @@ import com.analyio.analyiobackend.jpa.repos.CompanyRepo;
 import com.analyio.analyiobackend.jpa.repos.UserRepo;
 import com.analyio.analyiobackend.jpa.repos.UserResetPasswordCodeRepo;
 
+import jakarta.annotation.PostConstruct;
 import lombok.AllArgsConstructor;
 
 @Service
@@ -60,44 +64,45 @@ public class AuthService {
 
 
 public UserJpa signUpCompanyUserFlow(RegisterCompanyFirstTime request){
-    UserJpa user = UserJpa.builder()
-    .email(request.getSuperManagerEmail())
-    .username(request.getSuperManagerUsername())
-    .firstName(request.getSuperManagerFirstName())
-    .lastName(request.getSuperManagerLastName())
-    .password(passwordEncoder.encode(request.getSuperManagerPassword()))
-    .phoneNumber(request.getSuperManagerPhone())
-    .build();
-
-
-    user.setRole(Role.COMPANY_MANAGER);
-
+    // First, create and save the company
     Company company = Company.builder()
-    .name(request.getName())
-    .superManagerEmail(request.getSuperManagerEmail())
-    .superManagerPhone(request.getSuperManagerPhone())
-    .build();
-
-    user.setCompany(company);
+        .name(request.getName())
+        .superManagerEmail(request.getSuperManagerEmail())
+        .superManagerPhone(request.getSuperManagerPhone())
+        .build();
+    
+    // Save the company first to get a managed entity
+    Company savedCompany = companyRepo.save(company);
+    
+    // Then create the user
+    UserJpa user = UserJpa.builder()
+        .email(request.getSuperManagerEmail())
+        .username(request.getSuperManagerUsername())
+        .firstName(request.getSuperManagerFirstName())
+        .lastName(request.getSuperManagerLastName())
+        .password(passwordEncoder.encode(request.getSuperManagerPassword()))
+        .isActive(false)
+        .phoneNumber(request.getSuperManagerPhone())
+        .role(Role.COMPANY_MANAGER)
+        .company(savedCompany)  // Use the saved company
+        .build();
+    
+    if(request.getLocationData() != null && request.getLocationData().isPresent()) {
+        Location location = Location.builder()
+            .address(request.getLocationData().get().getAddress())
+            .city(request.getLocationData().get().getCity())
+            .state(request.getLocationData().get().getState())
+            .zipCode(request.getLocationData().get().getZipCode())
+            .country(request.getLocationData().get().getCountry())
+            .build();
+        user.setLocation(location);
+    }
 
     return userRepo.save(user);
 }
 
 
-public void createMasterUser(){
-    UserJpa user = UserJpa.builder()
-        .email("admin@admin.admin")
-        .username("admin")
-        .firstName("Admin")
-        .lastName("Admin")
-        .password(passwordEncoder.encode("admin123"))
-        .phoneNumber("1234567890")
-        .role(Role.SUPER_ADMIN)
-        .isActive(true)
-        .isDeleted(false)
-        .build();
 
-}
 public ResponseCookie refreshToken(String refreshToken) {
     try {
         // First, check if it's a refresh token
@@ -143,6 +148,7 @@ public UserJpa teamMemberLogin(String email, String accessToken){
         email,
         "Welcome to analyio!",
         "You've been added as a team member by " + currentUser.getUsername() + ". Your temporary password is: " + randomGeneratedPassword
+        +" to validate your account please click the link below: http://localhost:8080/api/auth/validate?email=" + email
 
     );    
 
@@ -177,6 +183,16 @@ public UserJpa updateAccountDetails(String accessToken, UpdateUserRequest reques
     }
     if (request.getPhoneNumber() != null) {
         user.setPhoneNumber(request.getPhoneNumber());
+    }
+    if(request.getLocationData() != null && request.getLocationData().isPresent()) {
+        Location location = Location.builder()
+            .address(request.getLocationData().get().getAddress())
+            .city(request.getLocationData().get().getCity())
+            .state(request.getLocationData().get().getState())
+            .zipCode(request.getLocationData().get().getZipCode())
+            .country(request.getLocationData().get().getCountry())
+            .build();
+        user.setLocation(location);
     }
 
     return userRepo.save(user);
@@ -286,4 +302,81 @@ public UserJpa resetPassword(ResetPasswordRequest request){
 }
 
 
+@PostConstruct
+public void makeSuperAdmin(){
+    if (!userRepo.existsByEmail("admin@analyio.backend")) {
+        UserJpa superAdmin = UserJpa.builder()
+            .email("admin@analyio.backend")
+            .password(passwordEncoder.encode("SuperAdminPassword123!"))
+            .role(Role.SUPER_ADMIN)
+            .build();
+        userRepo.save(superAdmin);
+    }
+}
+
+public void sendAdminEmail(String email){
+    String subject = "Welcome to Analyio";
+    String body = 
+    """
+    Hello, welcome to Analyio! Please change your password after logging in for the first time. Your autogenerated password is: """ + generateRandomPassword() + """
+    To activate your admin account, please click the link below:
+    http://localhost:8080/api/auth/validate?email=""" + email; 
+    emailService.sendEmail(email, subject, body);
+    UserJpa newAdminUser = UserJpa.builder()
+        .email(email)
+        .password(passwordEncoder.encode(generateRandomPassword()))
+        .role(Role.ADMIN)
+        .isActive(false)
+        .isDeleted(false)
+        .build();
+    
+    userRepo.save(newAdminUser);
+}
+
+public void sendAccountValidationEmail(String email) {
+    String subject = "Account Validation";
+    String body = """
+                  Please validate your account by clicking the link below:
+                  http://localhost:8080/api/auth/validate?email=""" + email;
+
+    emailService.sendEmail(email, subject, body);
+
+
+}
+
+public UserJpa registerClient(ClientRegistrationRequest request, String accessToken){
+    UserJpa currentUser = getAuthenticatedUser(accessToken);
+    String randomGeneratedPassword = generateRandomPassword();
+    Company currentUserCompany = currentUser.getCompany();
+    UserJpa newClient = UserJpa.builder()
+        .email(request.getEmail())
+        .username(request.getUsername())
+        .firstName(request.getFirstName())
+        .lastName(request.getLastName())
+        .password(passwordEncoder.encode(randomGeneratedPassword))
+        .isActive(false)
+        .phoneNumber(request.getPhoneNumber())
+        .role(Role.CLIENT)
+        .company(currentUserCompany)  // Use the current user's company
+        .build();
+    
+    emailService.sendEmail(
+        request.getEmail(),
+        "Welcome to Analyio!",
+        "You've been added as a client by " + currentUser.getUsername() + ". Your temporary password is: " + randomGeneratedPassword
+        +" to validate your account please click the link below: http://localhost:8080/api/auth/validate?email=" + request.getEmail()
+    );
+    return userRepo.save(newClient);
+    
+}
+
+public UserJpa validateUserEmail(String email) {    
+Optional<UserJpa> userOptional = userRepo.findByEmail(email);
+    if (userOptional.isEmpty()) {
+        throw new RuntimeException("User not found with email: " + email);
+    }
+    UserJpa user = userOptional.get();
+    user.setActive(true);
+    return userRepo.save(user);
+}
 }

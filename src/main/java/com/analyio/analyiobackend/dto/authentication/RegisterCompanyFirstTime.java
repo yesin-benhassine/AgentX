@@ -1,4 +1,4 @@
-package com.analyio.analyiobackend.dto;
+package com.analyio.analyiobackend.dto.authentication;
 
 import java.util.Optional;
 

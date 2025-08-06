@@ -81,8 +81,7 @@ public class UserJpa {
         LocalDateTime now = LocalDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
-        this.isActive = true;
-        this.isDeleted = false;  // 
+        this.isDeleted = false;  
     }
     @PreUpdate
     public void preUpdate() {
