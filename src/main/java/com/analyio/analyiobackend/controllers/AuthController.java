@@ -13,10 +13,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.analyio.analyiobackend.dto.LoginRequest;
-import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
-import com.analyio.analyiobackend.dto.ResetPasswordRequest;
-import com.analyio.analyiobackend.dto.UpdateUserRequest;
+import com.analyio.analyiobackend.dto.authentication.ClientRegistrationRequest;
+import com.analyio.analyiobackend.dto.authentication.LoginRequest;
+import com.analyio.analyiobackend.dto.authentication.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.authentication.ResetPasswordRequest;
+import com.analyio.analyiobackend.dto.authentication.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.UserJpa;
 import com.analyio.analyiobackend.services.AuthService;
 import com.analyio.analyiobackend.services.CleanupService;
@@ -261,5 +262,18 @@ public ResponseEntity<?> cleanDatabase() {
         return ResponseEntity.badRequest().body("Failed to clean database: " + e.getMessage());
     }
 
+}
+
+
+@PostMapping("/make-client")
+@PreAuthorize("hasRole('COMPANY_MANAGER') or hasRole('COMPANY_USER')")
+public ResponseEntity<?> makeClient(@RequestBody ClientRegistrationRequest request, HttpServletRequest httpServletRequest) {
+    try {
+        String accessToken = extractAccessToken(httpServletRequest);
+        authService.registerClient(request, accessToken);
+        return ResponseEntity.ok().build();
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Failed to make client: " + e.getMessage());
+    }
 }
 }

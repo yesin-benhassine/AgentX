@@ -16,10 +16,11 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import com.analyio.analyiobackend.dto.RegisterCompanyFirstTime;
-import com.analyio.analyiobackend.dto.ResetPasswordRequest;
-import com.analyio.analyiobackend.dto.TokenPair;
-import com.analyio.analyiobackend.dto.UpdateUserRequest;
+import com.analyio.analyiobackend.dto.authentication.ClientRegistrationRequest;
+import com.analyio.analyiobackend.dto.authentication.RegisterCompanyFirstTime;
+import com.analyio.analyiobackend.dto.authentication.ResetPasswordRequest;
+import com.analyio.analyiobackend.dto.authentication.TokenPair;
+import com.analyio.analyiobackend.dto.authentication.UpdateUserRequest;
 import com.analyio.analyiobackend.jpa.Entities.Company;
 import com.analyio.analyiobackend.jpa.Entities.Location;
 import com.analyio.analyiobackend.jpa.Entities.Role;
@@ -340,6 +341,33 @@ public void sendAccountValidationEmail(String email) {
 
     emailService.sendEmail(email, subject, body);
 
+
+}
+
+public UserJpa registerClient(ClientRegistrationRequest request, String accessToken){
+    UserJpa currentUser = getAuthenticatedUser(accessToken);
+    String randomGeneratedPassword = generateRandomPassword();
+    Company currentUserCompany = currentUser.getCompany();
+    UserJpa newClient = UserJpa.builder()
+        .email(request.getEmail())
+        .username(request.getUsername())
+        .firstName(request.getFirstName())
+        .lastName(request.getLastName())
+        .password(passwordEncoder.encode(randomGeneratedPassword))
+        .isActive(false)
+        .phoneNumber(request.getPhoneNumber())
+        .role(Role.CLIENT)
+        .company(currentUserCompany)  // Use the current user's company
+        .build();
+    
+    emailService.sendEmail(
+        request.getEmail(),
+        "Welcome to Analyio!",
+        "You've been added as a client by " + currentUser.getUsername() + ". Your temporary password is: " + randomGeneratedPassword
+        +" to validate your account please click the link below: http://localhost:8080/api/auth/validate?email=" + request.getEmail()
+    );
+    return userRepo.save(newClient);
+    
 }
 
 public UserJpa validateUserEmail(String email) {    
